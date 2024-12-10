@@ -95,9 +95,3 @@ This project analyzes Cyclistic bike share data over the last 12 months to uncov
    - Provide discounts on electric bikes during winter to increase usage among both user groups during colder months.
 
 ---
-
-## Next Steps
-
-1. Validate findings with additional datasets or customer feedback.
-2. Implement recommendations and monitor changes in user behavior.
-3. Explore opportunities to expand bike offerings based on user preferences (e.g., more electric bikes in winter).
