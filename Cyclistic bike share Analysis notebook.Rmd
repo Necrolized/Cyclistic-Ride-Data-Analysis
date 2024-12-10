@@ -1,0 +1,425 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# ---- Data Preparation ----
+
+## Packages setup:
+
+We will be using tidyverse for cleaning and visualization of the data.
+
+```{r}
+install.packages("tidyverse") 
+library(tidyverse)
+
+```
+
+## Data import and data frame set up:
+
+We are using the last 12 months of information available at [Divvy Trip Data](https://divvy-tripdata.s3.amazonaws.com/index.html).
+
+Each month is loaded into its own data frame (the file path will depend on the location of the csv file):
+
+```{r}
+x202312 <- read_csv("PATH/202312-divvy-tripdata.csv")
+X202401 <- read_csv("PATH/202401-divvy-tripdata.csv")
+X202402 <- read_csv("PATH/202402-divvy-tripdata.csv")
+X202403 <- read_csv("PATH/202403-divvy-tripdata.csv")
+X202404 <- read_csv("PATH/202404-divvy-tripdata.csv")
+X202405 <- read_csv("PATH/202405-divvy-tripdata.csv")
+X202406 <- read_csv("PATH/202406-divvy-tripdata.csv")
+X202407 <- read_csv("PATH/202407-divvy-tripdata.csv")
+X202408 <- read_csv("PATH/202408-divvy-tripdata.csv")
+X202409 <- read_csv("PATH/202409-divvy-tripdata.csv")
+X202410 <- read_csv("PATH/202410-divvy-tripdata.csv")
+X202411 <- read_csv("PATH/202411-divvy-tripdata.csv")
+```
+
+Make a list of all the data frames and merge them
+
+```{r}
+data_frames <- list(X202312, X202401, X202402, X202403, X202404, X202405, X202406, X202407, X202408, X202409, X202410, X202411)
+
+year_review_filtered <- bind_rows(data_frames)
+```
+
+# ---- Data Cleaning and Verification ----
+
+ride_id is the unique key in the data set: We will verify if there are any duplicates and that all entries are are 16 characters in length
+
+Check for duplicates:
+
+```{r}
+duplicates <- year_review_filtered[duplicated(year_review_filtered$ride_id), ]
+invalid_lengths <- year_review_filtered[nchar(year_review_filtered$ride_id) != 16, ]
+```
+
+Remove duplicate values, if any:
+
+```{r}
+year_review_filtered <- year_review_filtered %>% distinct(ride_id, .keep_all = TRUE)
+```
+
+Remove values with wrong length, if any:
+
+```{r}
+year_review_filtered <- year_review_filtered %>%
+  filter(nchar(ride_id) == 16)
+```
+
+## Checking empty spaces on data frame:
+
+Creating a function to count empty spaces and what column they are under
+
+```{r}
+count_empty_spaces <- function(column) {
+  if (inherits(column, c("POSIXlt", "POSIXct"))) {
+    return(sum(is.na(column)))
+  }
+  sum(is.na(column) | column == "" | is.nan(column) | column == " " )
+}
+
+empty_spaces_count <- sapply(year_review_filtered, count_empty_spaces)
+
+empty_spaces_summary <- data.frame( Column = names(empty_spaces_count), Empty_Spaces = empty_spaces_count )
+```
+
+Print the summary of empty spaces for analysis
+
+```{r}
+print(empty_spaces_summary)
+```
+
+# ---- Data Manipulation ----
+
+## Creating a ride_length column:
+
+Creating the "ride_length" column will allow us to calculate the total duration of each ride and use these values as a data point for further analysis. We will also remove outliers, such as rides with a `ride_length` less than a minute or longer than a day, to ensure the data is within a reasonable range for analysis.
+
+```{r}
+year_review_filtered$started_at <- as.POSIXct(year_review_filtered$started_at, format = "%Y-%m-%d %H:%M:%S")
+year_review_filtered$ended_at <- as.POSIXct(year_review_filtered$ended_at, format = "%Y-%m-%d %H:%M:%S")
+year_review_filtered$ride_length <- as.numeric(difftime(year_review_filtered$ended_at, year_review_filtered$started_at, units = "secs"))
+year_review_filtered <- year_review_filtered %>% filter(ride_length >= 60 & ride_length <= 86400)
+```
+
+## Creating a day_of_the_week column:
+
+Creating the "day_of_the_week" column will allow us to extract the day of the week from the `started_at` time stamp and use it as a data point for analysis. This will enable us to analyze ride patterns based on specific days of the week.
+
+```{r}
+year_review_filtered$day_of_week <- factor(year_review_filtered$day_of_week, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+```
+
+## Create a season column based on the month of the ride:
+
+Creating the 'season' column will allow us to categorize the data by season for deeper analysis.
+
+```{r}
+year_review_filtered$season <- case_when(
+  month(year_review_filtered$started_at) %in% c(12, 1, 2) ~ "Winter",    # December, January, February
+  month(year_review_filtered$started_at) %in% c(3, 4, 5) ~ "Spring",    # March, April, May
+  month(year_review_filtered$started_at) %in% c(6, 7, 8) ~ "Summer",    # June, July, August
+  month(year_review_filtered$started_at) %in% c(9, 10, 11) ~ "Fall"     # September, October, November
+)
+```
+
+# ---- Data Analysis ----
+
+## ---- Calculations ----
+
+For this analysis, we will focus on three main calculations: the mean ride length, the maximum ride length, and the mode of the day of the week.
+
+### Average ride length:
+
+```{r}
+mean_ride_length <- mean(year_review_filtered$ride_length, na.rm = TRUE)
+```
+
+### Max ride length:
+
+```{r}
+max_ride_length <- max(year_review_filtered$ride_length, na.rm = TRUE)
+```
+
+### Mode function:
+
+```{r}
+get_mode <- function(x) {
+  uniqx <- unique(x)  
+  uniqx[which.max(tabulate(match(x, uniqx)))]  
+}
+mode_day_of_week <- get_mode(year_review_filtered$day_of_week)
+```
+
+# ---- Pivot Table & Visualizations ----
+
+By analyzing the differences in ride lengths between members and casual riders, we can gain a deeper understanding of how usage patterns vary across these two groups. Specifically, we will explore the following: the average ride length by member type over the past year, and the average ride length by day and season for each member type
+
+## Average ride length by member type:
+
+```{r}
+## Pivot Table: 
+pivot_table_avg_ride_length <- year_review_filtered %>%
+  group_by(member_casual) %>%
+  summarize(average_ride_length = mean(ride_length, na.rm = TRUE))
+
+print(pivot_table_avg_ride_length)
+```
+
+```{r}
+## Pie chart: 
+ggplot(pivot_table_avg_ride_length, aes(x = "", y = average_ride_length, fill = member_casual)) +
+  geom_bar(stat = "identity", width = 1) + 
+  coord_polar(theta = "y") +  
+  labs(
+    title = "Average Ride Length for Members and Casual Riders", 
+    x = NULL,
+    y = NULL,  
+    fill = "Rider Type"
+  )
+```
+
+## Average ride length for member type by day and season:
+
+```{r}
+##Pivot Table: 
+pivot_table_avg_ride_length_day_season_member <- year_review_filtered %>%
+  group_by(member_casual, season, day_of_week) %>%
+  summarize(average_ride_length = mean(ride_length, na.rm = TRUE))
+
+pivot_table_avg_ride_length_day_season_member$day_of_week <- factor(pivot_table_avg_ride_length_day_season_member$day_of_week, 
+                                                                   levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+print(pivot_table_avg_ride_length_day_season_member)
+
+```
+
+```{r}
+# Bar chart:
+ggplot(pivot_table_avg_ride_length_day_season_member, aes(x = day_of_week, y = average_ride_length, fill = season)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Ride Length for Member Type by Day of Week and Season", 
+    x = "Day of Week", 
+    y = "Average Ride Length (seconds)",
+    fill = "Season"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 0.8)  
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Summer" = "darkorange2",
+      "Spring" = "darkgreen",
+      "Fall" = "brown3",
+      "Winter" = "deepskyblue3"
+    )
+  ) +
+  facet_wrap(~ member_casual)  
+```
+
+In addition to analyzing ride lengths, we will also look at the total number of rides taken by members and casual riders. This will allow us to further compare the usage frequency between the two groups. By examining these totals, we can gain a better understanding of how often each group utilizes the service and whether there are notable differences in their overall usage patterns.
+
+To explore this further, we will first look at the total number of rides across the entire year. Then, we will break it down by day of the week and season to uncover more specific trends:
+
+## Total rides by member type last year:
+
+```{r}
+##Pivot Table: 
+total_rides_by_member_type <- year_review_filtered %>%
+  group_by(member_casual) %>%
+  summarize(total_rides = as.integer(n()))
+
+print(total_rides_by_member_type)
+
+```
+
+```{r}
+##Pie Chart: 
+ggplot(total_rides_by_member_type, aes(x = "", y = total_rides, fill = member_casual)) +
+  geom_bar(stat = "identity", width = 1) + 
+  coord_polar(theta = "y") +  # Transform to pie chart
+  geom_text(aes(label = scales::comma(total_rides)), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", 
+            size = 5) +  # Adjust size as needed
+  labs(
+    title = "Total Rides by Member Type",
+    x = NULL,  # Remove x-axis label
+    y = NULL,  # Remove y-axis label
+    fill = "Member Type"
+  ) +
+  theme_void()  # Remove unnecessary plot elements (like axes)
+
+```
+
+## Total rides by day and season:
+
+```{r}
+## Pivot table: 
+total_rides_by_member_type_day_season <- year_review_filtered %>%
+  group_by(member_casual, day_of_week, season) %>%
+  summarize(total_rides = n())
+
+print(total_rides_by_member_type_day_season)
+```
+
+```{r}
+## Bar chart: 
+ggplot(total_rides_by_member_type_day_season, aes(x = day_of_week, y = total_rides, fill = season)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  labs(
+    title = "Total Rides by Day of Week, Season, and Member Type",
+    x = "Day of Week",
+    y = "Total Rides",
+    fill = "Season"
+  ) +
+  facet_wrap(~ member_casual) +  # Facet by member type
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)  # Rotate x-axis labels
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Summer" = "darkorange2",
+      "Spring" = "darkgreen",
+      "Fall" = "brown3",
+      "Winter" = "deepskyblue3"
+    )
+  )
+```
+
+Lastly, we will consider the ride type by comparing the total usage of each ride type over the past year, as well as the usage per day and season, broken down by member type
+
+## Total usage times per ride type:
+
+```{r}
+##Pivot Table: 
+pivot_table_rideable_type_usage <- year_review_filtered %>% group_by(rideable_type) %>% summarize(total_ride_count = n())
+
+print(pivot_table_rideable_type_usage)
+
+```
+
+```{r}
+## Pie chart: 
+ggplot(pivot_table_rideable_type_usage, aes(x = "", y = total_ride_count, fill = rideable_type)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = comma(total_ride_count)), # Use scales::comma to format numbers
+            position = position_stack(vjust = 0.5), 
+            color = "white", 
+            size = 4) +
+  labs(
+    title = "Total Ride Count by Rideable Type", 
+    fill = "Rideable Type"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold") # Center and bold the title
+  )
+```
+
+## Total usage of ride type by day and season:
+
+```{r}
+pivot_table_rideable_type_usage_by_day_season <- year_review_filtered %>%
+  group_by(rideable_type, day_of_week, season) %>%
+  summarize(total_ride_count = n(), .groups = "drop")  
+
+print(pivot_table_rideable_type_usage_by_day_season)
+```
+
+```{r}
+ggplot(pivot_table_rideable_type_usage_by_day_season, aes(x = day_of_week, y = total_ride_count, fill = season)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Rideable Type Usage by Day of Week and Season", 
+    x = "Day of Week", 
+    y = "Total Ride Count",
+    fill = "Season"
+  ) +
+  facet_wrap(~ rideable_type) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Summer" = "darkorange2",
+      "Spring" = "darkgreen",
+      "Fall" = "brown3",
+      "Winter" = "deepskyblue3"
+    )
+  )
+```
+
+## Bike type usage per day per season:
+
+```{r}
+## Pivot Table: 
+pivot_table_bike_type_member_day_season <- year_review_filtered %>%
+  group_by(member_casual, rideable_type, day_of_week, season) %>%
+  summarize(total_ride_count = n(), .groups = "drop")
+
+# Ensure day_of_week is ordered correctly
+pivot_table_bike_type_member_day_season$day_of_week <- factor(pivot_table_bike_type_member_day_season$day_of_week, 
+                                                              levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+
+print(pivot_table_bike_type_member_day_season)
+
+```
+
+```{r}
+## Stacked bar chart: 
+ggplot(pivot_table_bike_type_member_day_season, aes(x = day_of_week, y = total_ride_count, fill = rideable_type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ season + member_casual, scales = "free_y") +
+  labs(
+    title = "Total Rides by Bike Type, Member Type, Day of Week, and Season", 
+    x = "Day of Week", 
+    y = "Total Ride Count",
+    fill = "Bike Type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 0.8)  
+  ) +
+  scale_fill_manual(
+    values = c("classic_bike" = "blue", 
+               "electric_bike" = "green", 
+               "electric_scooter" = "purple")
+  )
+
+```
+
+# ---- Analysis ----
+
+Both Cyclistic user types prefer cycling during the spring and summer months (May to September), with a noticeable drop in rides after September, likely due to cooler weather.
+
+Cyclistic members take more rides than casual riders, with consistent usage throughout the week. Casual riders, on the other hand, primarily use bikes on weekends. However, members tend to have shorter ride durations, suggesting they use bikes for specific goals (e.g., commuting), while casual riders, with longer rides, likely use bikes for recreational purposes.
+
+Both groups prefer classic bicycles over electric bikes, though there is an uptick in electric bike usage in the fall and winter months.
+
+Ride duration is generally longer on weekends for both groups compared to weekdays.
+
+# ---- Recommendations ----
+
+## Targeted Marketing Campaigns:
+
+Focus marketing efforts in spring and summer at tourist and recreational locations that attract casual riders. This will help reach a larger portion of the casual rider population who are most active during these months.
+
+## Weekend Subscription Plan:
+
+Create a weekend-specific subscription or membership offering tailored to casual riders, as their usage is primarily focused on weekends. This could encourage more frequent usage and boost membership for casual riders.
+
+## Incentivize Membership with Discounts:
+
+Offer discounts for longer rides to incentivize casual riders to consider a membership. This could help convert casual riders into members by making memberships more appealing for those who typically enjoy longer, leisurely rides.
+
+## Winter Electric Bike Promotions:
+
+Offer discounts on electric bikes during the winter months, when there is a noticeable increase in their usage. This could appeal to both Cyclistic members and casual riders who are looking for a more comfortable and weather-appropriate ride during colder months.
